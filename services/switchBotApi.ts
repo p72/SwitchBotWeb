@@ -8,7 +8,7 @@ const getUrl = (endpoint: string, useProxy: boolean = false) => {
   return useProxy ? `${CORS_PROXY_URL}${encodeURIComponent(url)}` : url;
 };
 
-interface CategorizedDevices {
+export interface CategorizedDevices {
   ac: SwitchBotDevice[];
   tv: SwitchBotDevice[];
   light: SwitchBotDevice[];
@@ -40,27 +40,29 @@ export const getDevices = async (
       };
 
       // Process IR Devices (Virtual)
-      data.body.infraredRemoteList.forEach(d => {
-        if (d.remoteType === 'Air Conditioner') devices.ac.push(d);
-        if (d.remoteType === 'TV' || d.remoteType === 'IPTV' || d.remoteType === 'Set Top Box') devices.tv.push(d);
-        if (d.remoteType === 'Light') devices.light.push(d);
-      });
+      if (data.body.infraredRemoteList) {
+        data.body.infraredRemoteList.forEach(d => {
+          if (d.remoteType === 'Air Conditioner') devices.ac.push(d);
+          if (d.remoteType === 'TV' || d.remoteType === 'IPTV' || d.remoteType === 'Set Top Box') devices.tv.push(d);
+          if (d.remoteType === 'Light') devices.light.push(d);
+        });
+      }
 
       // Process Physical Devices
-      data.body.deviceList.forEach(d => {
-        // Physical lights (Bot, Plug, Color Bulb, Strip Light, Ceiling Light)
-        // Simplified check: if it has "Light" or "Bulb" or "Strip" or is a Bot/Plug (often used for lights)
-        // For strictness, let's look for known types or just generic mapping
-        const type = d.deviceType || '';
-        if (type.includes('Light') || type.includes('Bulb') || type.includes('Strip') || type === 'Bot' || type === 'Plug') {
-          devices.light.push(d);
-        }
-        
-        // Meters and Hubs with Meter capabilities
-        if (type.includes('Meter') || type.includes('Hub 2')) {
-          devices.meter.push(d);
-        }
-      });
+      if (data.body.deviceList) {
+        data.body.deviceList.forEach(d => {
+          // Physical lights (Bot, Plug, Color Bulb, Strip Light, Ceiling Light)
+          const type = d.deviceType || '';
+          if (type.includes('Light') || type.includes('Bulb') || type.includes('Strip') || type === 'Bot' || type === 'Plug') {
+            devices.light.push(d);
+          }
+          
+          // Meters and Hubs with Meter capabilities
+          if (type.includes('Meter') || type.includes('Hub 2')) {
+            devices.meter.push(d);
+          }
+        });
+      }
       
       return {
         success: true,
@@ -150,12 +152,12 @@ export const getMeterStatus = async (
   }
 };
 
-// AC Specific Wrapper (keeping existing signature for compatibility)
+// AC Specific Wrapper
 export const sendAirConditionerCommand = async (
   credentials: SwitchBotCredentials,
+  deviceId: string,
   state: AcState
 ): Promise<{ success: boolean; message: string; payload: string }> => {
-  const { deviceId } = credentials;
   
   // Map parameters
   const tempParam = state.temperature;

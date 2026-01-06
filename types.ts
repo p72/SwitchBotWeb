@@ -29,11 +29,6 @@ export interface SwitchBotCredentials {
   token: string;
   secret: string;
   useProxy?: boolean;
-  // Device IDs
-  deviceId: string; // Keep for backward compatibility (AC)
-  tvDeviceId?: string;
-  lightDeviceId?: string;
-  meterDeviceId?: string;
 }
 
 export interface ApiResponse {

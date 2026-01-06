@@ -1,22 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { ControlPanel } from './components/ControlPanel'; // Renaming mentally to AcPanel, but file stays ControlPanel for now
+import { ControlPanel } from './components/ControlPanel'; 
 import { TvPanel } from './components/TvPanel';
 import { LightPanel } from './components/LightPanel';
 import { MeterPanel } from './components/MeterPanel';
 import { ConfigForm } from './components/ConfigForm';
-import { AcState, SwitchBotCredentials } from './types';
+import { AcState, SwitchBotCredentials, SwitchBotDevice } from './types';
 import { DEFAULT_STATE } from './constants';
-import { sendAirConditionerCommand } from './services/switchBotApi';
+import { sendAirConditionerCommand, getDevices, CategorizedDevices } from './services/switchBotApi';
 
 // Helper to safely access env vars
 const getEnvCredentials = (): Partial<SwitchBotCredentials> => {
   return {
     token: process.env.REACT_APP_SWITCHBOT_TOKEN || '',
     secret: process.env.REACT_APP_SWITCHBOT_SECRET || '',
-    deviceId: process.env.REACT_APP_SWITCHBOT_DEVICE_ID || '', // AC
-    tvDeviceId: process.env.REACT_APP_SWITCHBOT_TV_ID || '',
-    lightDeviceId: process.env.REACT_APP_SWITCHBOT_LIGHT_ID || '',
-    meterDeviceId: process.env.REACT_APP_SWITCHBOT_METER_ID || '',
   };
 };
 
@@ -31,22 +27,28 @@ const App: React.FC = () => {
   const [credentials, setCredentials] = useState<SwitchBotCredentials | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.AC);
   
-  // AC State
+  // Devices State
+  const [devices, setDevices] = useState<CategorizedDevices>({ ac: [], tv: [], light: [], meter: [] });
+  const [isFetchingDevices, setIsFetchingDevices] = useState(false);
+
+  // AC State (Shared across ACs for now, or per device logic handled in component?)
+  // For now, we keep one UI state and apply it to the selected device.
   const [acState, setAcState] = useState<AcState>(DEFAULT_STATE);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSendingAc, setIsSendingAc] = useState(false);
   
   // Logs
   const [log, setLog] = useState<{ type: 'success' | 'error' | 'info'; message: string; command?: string } | null>(null);
 
+  // Initial Load
   useEffect(() => {
     const storedCreds = localStorage.getItem('sb_credentials');
     const envCreds = getEnvCredentials();
 
     if (storedCreds) {
       try {
-        setCredentials(JSON.parse(storedCreds));
+        const parsed = JSON.parse(storedCreds);
+        setCredentials(parsed);
       } catch (e) {
-        console.error("Failed to parse stored credentials", e);
         if (envCreds.token && envCreds.secret) {
            setCredentials(envCreds as SwitchBotCredentials);
         }
@@ -56,18 +58,40 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Fetch devices when credentials change
+  useEffect(() => {
+    if (credentials) {
+      fetchDevices(credentials);
+    }
+  }, [credentials]);
+
+  const fetchDevices = async (creds: SwitchBotCredentials) => {
+    setIsFetchingDevices(true);
+    const result = await getDevices(creds.token, creds.secret, creds.useProxy);
+    setIsFetchingDevices(false);
+    
+    if (result.success) {
+       setDevices(result.devices);
+       // Auto-switch tabs if no devices in default tab?
+       // Optional improvement
+    } else {
+       handleLog('error', `Failed to fetch devices: ${result.message}`);
+    }
+  };
+
   const handleSaveCredentials = (creds: SwitchBotCredentials) => {
     setCredentials(creds);
     localStorage.setItem('sb_credentials', JSON.stringify(creds));
-    setLog({ type: 'success', message: 'Settings saved to browser storage.' });
+    handleLog('success', 'Credentials saved. Connecting...');
+    // fetchDevices is triggered by useEffect
   };
 
-  const handleAcApply = async () => {
-    if (!credentials) return;
-    setIsLoading(true);
+  const handleAcApply = async (deviceId: string) => {
+    if (!credentials || !deviceId) return;
+    setIsSendingAc(true);
     setLog({ type: 'info', message: 'Sending AC command...' });
     try {
-      const result = await sendAirConditionerCommand(credentials, acState);
+      const result = await sendAirConditionerCommand(credentials, deviceId, acState);
       if (result.success) {
         setLog({ type: 'success', message: 'AC Updated', command: result.payload });
       } else {
@@ -76,36 +100,36 @@ const App: React.FC = () => {
     } catch (e) {
       setLog({ type: 'error', message: 'Failed to send AC command' });
     } finally {
-      setIsLoading(false);
+      setIsSendingAc(false);
     }
   };
 
-  const handleLog = (type: 'success' | 'error', message: string) => {
+  const handleLog = (type: 'success' | 'error' | 'info', message: string) => {
     setLog({ type, message });
   };
 
   const getStoredOrEnvCredentials = (): Partial<SwitchBotCredentials> => {
     try {
       const stored = localStorage.getItem('sb_credentials');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.error("Error reading storage", e);
-    }
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
     return getEnvCredentials();
   };
 
-  const TabButton = ({ tab, label, icon }: { tab: Tab, label: string, icon: string }) => (
+  const TabButton = ({ tab, label, icon, count }: { tab: Tab, label: string, icon: string, count?: number }) => (
     <button
       onClick={() => setActiveTab(tab)}
-      className={`flex-1 py-3 px-2 text-sm md:text-base font-medium transition-colors border-b-2 ${
+      className={`flex-1 py-3 px-2 text-sm md:text-base font-medium transition-colors border-b-2 flex items-center justify-center gap-1 ${
         activeTab === tab
           ? 'border-blue-500 text-blue-600 bg-blue-50'
           : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
       }`}
     >
-      <span className="mr-1">{icon}</span> {label}
+      <span>{icon}</span> 
+      <span className="hidden sm:inline">{label}</span>
+      {count !== undefined && count > 0 && (
+        <span className="bg-gray-200 text-gray-600 text-xs rounded-full px-2 py-0.5 ml-1">{count}</span>
+      )}
     </button>
   );
 
@@ -123,44 +147,59 @@ const App: React.FC = () => {
         ) : (
           <>
             <div className="flex justify-between items-center bg-white px-4 py-3 rounded-lg shadow-sm border border-gray-200">
-               <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                 <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                 Connected
-               </span>
-               <button 
-                  onClick={() => setCredentials(null)}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-3 py-1 rounded hover:bg-blue-50 transition"
-               >
-                 ⚙️ Settings
-               </button>
+               <div className="flex items-center gap-3">
+                 <span className="flex h-3 w-3 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                  </span>
+                 <span className="text-sm font-medium text-gray-600">Connected</span>
+                 {isFetchingDevices && <span className="text-xs text-blue-500 animate-pulse">Syncing devices...</span>}
+               </div>
+               
+               <div className="flex gap-2">
+                 <button 
+                    onClick={() => fetchDevices(credentials)}
+                    className="text-xs text-gray-500 hover:text-blue-600 font-semibold px-3 py-1 rounded hover:bg-gray-50 transition"
+                    title="Refresh Devices"
+                 >
+                   🔄
+                 </button>
+                 <button 
+                    onClick={() => setCredentials(null)}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-3 py-1 rounded hover:bg-blue-50 transition"
+                 >
+                   ⚙️ Settings
+                 </button>
+               </div>
             </div>
 
             {/* Tabs */}
             <div className="bg-white rounded-t-xl shadow-sm border border-gray-200 flex overflow-hidden">
-               <TabButton tab={Tab.AC} label="AC" icon="❄️" />
-               <TabButton tab={Tab.TV} label="TV" icon="📺" />
-               <TabButton tab={Tab.LIGHT} label="Light" icon="💡" />
-               <TabButton tab={Tab.METER} label="Meter" icon="🌡️" />
+               <TabButton tab={Tab.AC} label="AC" icon="❄️" count={devices.ac.length} />
+               <TabButton tab={Tab.TV} label="TV" icon="📺" count={devices.tv.length} />
+               <TabButton tab={Tab.LIGHT} label="Light" icon="💡" count={devices.light.length} />
+               <TabButton tab={Tab.METER} label="Meter" icon="🌡️" count={devices.meter.length} />
             </div>
 
             {/* Tab Content */}
             <div className="relative">
               {activeTab === Tab.AC && (
                 <ControlPanel 
+                  devices={devices.ac}
                   state={acState} 
                   onChange={setAcState} 
                   onApply={handleAcApply} 
-                  isLoading={isLoading} 
+                  isLoading={isSendingAc} 
                 />
               )}
               {activeTab === Tab.TV && (
-                <TvPanel credentials={credentials} onLog={handleLog} />
+                <TvPanel devices={devices.tv} credentials={credentials} onLog={handleLog} />
               )}
               {activeTab === Tab.LIGHT && (
-                <LightPanel credentials={credentials} onLog={handleLog} />
+                <LightPanel devices={devices.light} credentials={credentials} onLog={handleLog} />
               )}
               {activeTab === Tab.METER && (
-                <MeterPanel credentials={credentials} onLog={handleLog} />
+                <MeterPanel devices={devices.meter} credentials={credentials} onLog={handleLog} />
               )}
             </div>
           </>
