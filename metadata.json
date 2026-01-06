@@ -1,0 +1,5 @@
+{
+  "name": "SwitchBot Controller",
+  "description": "A comprehensive remote control interface for SwitchBot devices. Supports Air Conditioners (IR), TVs, Lights, and Meter/Hub monitoring.",
+  "requestFramePermissions": []
+}
